@@ -8,13 +8,18 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Microsoft.Win32;
+using Newtonsoft.Json;
 
 namespace Viramate {
     class Program {
+        static bool Running = true;
+
         static void Main (string[] args) {
             try {
-                if (args.Length == 0)
+                if ((args.Length == 0) || !args[0].StartsWith("chrome-extension://"))
                     InstallExtension().Wait();
+                else
+                    MessagingHostMainLoop().Wait();
             } catch (Exception exc) {
                 Console.Error.WriteLine("Uncaught: {0}", exc);
                 Environment.ExitCode = 1;
@@ -133,6 +138,76 @@ namespace Viramate {
             Process.Start(helpFilePath);
             Console.WriteLine("Press enter to exit.");
             Console.ReadLine();
+        }
+
+        class Msg {
+            public string type;
+        }
+
+        static async Task MessagingHostMainLoop () {
+            var stdin = Console.OpenStandardInput();
+            var stdout = Console.OpenStandardOutput();
+            var logFilePath = Path.Combine(InstallPath, "installer.log");
+            using (var log = new StreamWriter(logFilePath, false, Encoding.UTF8)) {
+                log.AutoFlush = true;
+                await log.WriteLineAsync($"Installer started as native messaging host. Command line: {Environment.CommandLine}");
+
+                while (Running) {
+                    var msg = await ReadMessage<Msg>(stdin);
+                    if (msg == null) {
+                        await Task.Delay(100);
+                        continue;
+                    }
+
+                    await TryHandleMessage(log, stdout, msg);
+                }
+
+                await log.WriteLineAsync($"Exiting.");
+            }
+        }
+
+        static async Task TryHandleMessage (StreamWriter log, Stream stdout, Msg msg) {
+            await log.WriteLineAsync($"Handling message {msg.type}");
+
+            switch (msg.type) {
+                case "extension-startup":
+                    await WriteMessage(stdout, new { type = "installer-is-working" });
+                    Running = false;
+                    return;
+                case "exit":
+                    await WriteMessage(stdout, new { type = "exiting" });
+                    Running = false;
+                    return;
+            }
+        }
+
+        static async Task<T> ReadMessage<T> (Stream stream)
+            where T : class 
+        {
+            var lengthBuf = new byte[4];
+            if (await stream.ReadAsync(lengthBuf, 0, 4) != 4)
+                return null;
+
+            var lengthBytes = BitConverter.ToInt32(lengthBuf, 0);
+            var messageBuf = new byte[lengthBytes];
+            if (await stream.ReadAsync(messageBuf, 0, lengthBytes) != lengthBytes)
+                return null;
+
+            var json = Encoding.UTF8.GetString(messageBuf);
+            var result = JsonConvert.DeserializeObject<T>(json);
+            return result;
+        }
+
+        static async Task WriteMessage<T> (Stream stream, T message)
+            where T : class
+        {
+            var json = JsonConvert.SerializeObject(message);
+            var messageByteLength = Encoding.UTF8.GetByteCount(json);
+            var messageBuf = new byte[messageByteLength + 4];
+            Array.Copy(BitConverter.GetBytes(messageByteLength), messageBuf, 4);
+            Encoding.UTF8.GetBytes(json, 0, json.Length, messageBuf, 4);
+            await stream.WriteAsync(messageBuf, 0, messageBuf.Length);
+            await stream.FlushAsync();
         }
     }
 }
