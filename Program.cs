@@ -2,7 +2,9 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
+using System.Net;
 using System.Security.Principal;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -23,6 +25,11 @@ namespace Viramate {
             } catch (Exception exc) {
                 Console.Error.WriteLine("Uncaught: {0}", exc);
                 Environment.ExitCode = 1;
+
+                if (Debugger.IsAttached) {
+                    Console.WriteLine("Press enter to exit.");
+                    Console.ReadLine();
+                }
             }
         }
 
@@ -51,12 +58,18 @@ namespace Viramate {
             }
         }
 
-        static bool IsDebugMode {
+        static bool InstallFromDisk {
             get {
-                return (Debugger.IsAttached && ExecutablePath.EndsWith("\\bin\\Viramate.exe")) ||
-                    (Environment.GetCommandLineArgs()[0] == "--debug");
+                var defaultDebug = (Debugger.IsAttached || ExecutablePath.EndsWith("ViramateInstaller\\bin\\Viramate.exe"));
+                var args = Environment.GetCommandLineArgs();
+                if (args.Length <= 1)
+                    return defaultDebug;
+
+                return (defaultDebug || (args[1] == "--disk")) && (args[1] != "--network");
             }
         }
+
+        const string SourceUrl = "http://luminance.org/vm/ext.zip";
 
         static string InstallPath {
             get {
@@ -79,63 +92,106 @@ namespace Viramate {
             }
         }
 
-        static async Task UpdateExtensionFiles (bool cleanInstall) {
-            Directory.CreateDirectory(InstallPath);
-
-            if (IsDebugMode) {
-                var sourcePath = Path.GetFullPath(Path.Combine(ExecutableDirectory, "..", "..", "ext"));
-                Console.Write($"Copying from {sourcePath} to {InstallPath} ");
-
+        static Task UpdateFromFolder (string sourcePath) {
+            return Task.Run(() => {
                 var allFiles = Directory.GetFiles(sourcePath, "*", SearchOption.AllDirectories)
                     .Where(f => !f.Contains("\\ext\\ts\\"));
+
                 foreach (var f in allFiles) {
                     var localPath = Path.GetFullPath(f).Replace(sourcePath, "").Substring(1);
                     var destinationPath = Path.Combine(InstallPath, localPath);
                     Directory.CreateDirectory(Path.GetDirectoryName(destinationPath));
                     File.Copy(f, destinationPath, true);
-                    Console.Write(".");
+                }
+            });
+        }
+
+        static Task UpdateFromZipFile (string sourcePath) {
+            return Task.Run(() => {
+                using (var zf = ZipFile.OpenRead(sourcePath))
+                foreach (var entry in zf.Entries) {
+                    if (entry.FullName.EndsWith("\\") || entry.FullName.EndsWith("/"))
+                        continue;
+
+                    var destFilename = Path.Combine(InstallPath, entry.FullName);
+                    Directory.CreateDirectory(Path.GetDirectoryName(destFilename));
+                    entry.ExtractToFile(destFilename, true);
+                }
+            });
+        }
+
+        static async Task<string> DownloadLatest (string sourceUrl) {
+            var wc = new WebClient();
+            var zipPath = Path.Combine(InstallPath, "latest.zip");
+            await wc.DownloadFileTaskAsync(sourceUrl, zipPath + ".tmp");
+            if (File.Exists(zipPath))
+                File.Delete(zipPath);
+            File.Move(zipPath + ".tmp", zipPath);
+            return zipPath;
+        }
+
+        static async Task<bool> InstallExtensionFiles () {
+            Directory.CreateDirectory(InstallPath);
+
+            if (InstallFromDisk) {
+                var sourcePath = Path.GetFullPath(Path.Combine(ExecutableDirectory, "..", "..", "ext"));
+                Console.Write($"Copying from {sourcePath} to {InstallPath} ... ");
+                await UpdateFromFolder(sourcePath);
+                Console.WriteLine("done.");
+                return true;
+            } else {
+                string zipPath = null;
+
+                Console.Write($"Downloading {SourceUrl}... ");
+                try {
+                    zipPath = await DownloadLatest(SourceUrl);
+                    Console.WriteLine("done.");
+                } catch (WebException exc) {
+                    Console.WriteLine(exc.Message);
+                    return false;
                 }
 
-                Console.WriteLine();
-                Console.WriteLine("done.");
-            }
+                Console.Write($"Extracting {zipPath} to {InstallPath} ... ");
+                await UpdateFromZipFile(zipPath);
+                Console.WriteLine($"done.");
 
-            return;
+                return true;
+            }
         }
 
         static async Task InstallExtension () {
-            if (IsDebugMode)
-                Console.WriteLine("// DEBUG MODE");
             Console.WriteLine("Installing extension. This'll take a moment...");
 
-            await UpdateExtensionFiles(true);
+            if (await InstallExtensionFiles()) {
+                Console.WriteLine($"Extension id: {ExtensionId}");
 
-            Console.WriteLine($"Extension id: {ExtensionId}");
+                var manifestText = File.ReadAllText(Path.Combine(ExecutableDirectory, "nmh.json"));
+                manifestText = manifestText
+                    .Replace(
+                        "$executable_path$", 
+                        ExecutablePath.Replace("\\", "\\\\").Replace("\"", "\\\"")
+                    ).Replace(
+                        "$extension_id$", ExtensionId
+                    );
+                var manifestPath = Path.Combine(InstallPath, "nmh.json");
+                File.WriteAllText(manifestPath, manifestText);
 
-            var manifestText = File.ReadAllText(Path.Combine(ExecutableDirectory, "nmh.json"));
-            manifestText = manifestText
-                .Replace(
-                    "$executable_path$", 
-                    ExecutablePath.Replace("\\", "\\\\").Replace("\"", "\\\"")
-                ).Replace(
-                    "$extension_id$", ExtensionId
-                );
-            var manifestPath = Path.Combine(InstallPath, "nmh.json");
-            File.WriteAllText(manifestPath, manifestText);
+                const string keyName = @"Software\Google\Chrome\NativeMessagingHosts\com.viramate.installer";
+                using (var key = Registry.CurrentUser.CreateSubKey(keyName, true)) {
+                    Console.WriteLine($"{keyName}\\@ = {manifestPath}");
+                    key.SetValue(null, manifestPath);
+                }
 
-            const string keyName = @"Software\Google\Chrome\NativeMessagingHosts\com.viramate.installer";
-            using (var key = Registry.CurrentUser.CreateSubKey(keyName, true)) {
-                Console.WriteLine($"{keyName}\\@ = {manifestPath}");
-                key.SetValue(null, manifestPath);
+                var helpFilePath = Path.Combine(ExecutableDirectory, "Help", "index.html");
+                var text = File.ReadAllText(helpFilePath);
+                text = Regex.Replace(text, @"\<pre\ id='extension_path'>[^<]*\</pre\>", @"<pre id='extension_path'>" + InstallPath + "</pre>");
+                File.WriteAllText(helpFilePath, text);
+
+                Console.WriteLine("Viramate has been downloaded. Opening install instructions...");
+                Process.Start(helpFilePath);
+            } else {
+                Console.WriteLine("Failed to install extension.");
             }
-
-            var helpFilePath = Path.Combine(ExecutableDirectory, "Help", "index.html");
-            var text = File.ReadAllText(helpFilePath);
-            text = Regex.Replace(text, @"\<pre\ id='extension_path'>[^<]*\</pre\>", @"<pre id='extension_path'>" + InstallPath + "</pre>");
-            File.WriteAllText(helpFilePath, text);
-
-            Console.WriteLine("Viramate has been downloaded. Opening install instructions...");
-            Process.Start(helpFilePath);
             Console.WriteLine("Press enter to exit.");
             Console.ReadLine();
         }
@@ -171,7 +227,7 @@ namespace Viramate {
 
             switch (msg.type) {
                 case "extension-startup":
-                    await WriteMessage(stdout, new { type = "installer-is-working" });
+                    await WriteMessage(stdout, new { type = "installer-is-working", installFromDisk = InstallFromDisk });
                     Running = false;
                     return;
                 case "exit":
