@@ -23,6 +23,7 @@ namespace Viramate {
 
         static string ExtensionId {
             get {
+                /*
                 var identity = WindowsIdentity.GetCurrent();
                 var binLength = identity.User.BinaryLength;
                 var bin = new byte[binLength];
@@ -38,6 +39,10 @@ namespace Viramate {
                     result[j] = (char)((int)'a' + (bin[i] % 26));
                 }
                 return new string(result);
+                */
+
+                // FIXME: Generating a new extension ID requires manufacturing a public signing key... ugh
+                return "fgpokpknehglcioijejfeebigdnbnokj";
             }
         }
 
@@ -75,6 +80,7 @@ namespace Viramate {
             if (IsDebugMode) {
                 var sourcePath = Path.GetFullPath(Path.Combine(ExecutableDirectory, "..", "..", "ext"));
                 Console.Write($"Copying from {sourcePath} to {InstallPath} ");
+
                 var allFiles = Directory.GetFiles(sourcePath, "*", SearchOption.AllDirectories)
                     .Where(f => !f.Contains("\\ext\\ts\\"));
                 foreach (var f in allFiles) {
@@ -84,9 +90,9 @@ namespace Viramate {
                     File.Copy(f, destinationPath, true);
                     Console.Write(".");
                 }
+
                 Console.WriteLine();
                 Console.WriteLine("done.");
-                // Directory.GetFiles(
             }
 
             return;
@@ -112,7 +118,7 @@ namespace Viramate {
             var manifestPath = Path.Combine(InstallPath, "nmh.json");
             File.WriteAllText(manifestPath, manifestText);
 
-            const string keyName = @"Software\Google\Chrome\NativeMessagingHosts\viramate";
+            const string keyName = @"Software\Google\Chrome\NativeMessagingHosts\com.viramate.installer";
             using (var key = Registry.CurrentUser.CreateSubKey(keyName, true)) {
                 Console.WriteLine($"{keyName}\\@ = {manifestPath}");
                 key.SetValue(null, manifestPath);
