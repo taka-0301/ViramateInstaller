@@ -5,10 +5,18 @@
     <meta charset="utf-8" />
     <title>Viramate Installer Guide</title>
     <script type="text/javascript">
-        function onLoad() {
+        function onLoad () {
+            var ep = document.querySelector("#extension_path");
+            selectElementText(ep);
+            ep.onclick = function () { selectElementText(ep); };
+            var ce = document.querySelector("#extensions_url")
+            ce.onclick = function () { selectElementText(ce); };
+        }
+
+        function selectElementText (elt) {
             var selection = window.getSelection();
             var range = document.createRange();
-            range.selectNodeContents(document.querySelector("#extension_path"));
+            range.selectNodeContents(elt);
             selection.removeAllRanges();
             selection.addRange(range);
         }
@@ -18,7 +26,7 @@
     <h2>How to finish installing Viramate</h2>
     <ol>
         <li>Copy this folder name by pressing CTRL-C: <pre id='extension_path'></pre></li>
-        <li>Visit <pre>chrome://extensions</pre> in your Chrome browser.</li>
+        <li>Visit <pre id="extensions_url">chrome://extensions</pre> in your Chrome browser.</li>
         <li>Ensure that 'Developer mode' is turned on.<br><img src="developer-mode.png"></li>
         <li>Click 'Load unpacked extension...'<br><img src="load-unpacked-extension.png"></li>
         <li>Paste the folder name into the dialog box by selecting all the existing text in the 'Folder' field and then pressing CTRL-V.<br><img src="folder-name.png"></li>

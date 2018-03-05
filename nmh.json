@@ -1,1 +1,9 @@
-﻿
+﻿{
+    "name": "com.viramate.installer",
+    "description": "Viramate Installer",
+    "path": "$executable_path$",
+    "type": "stdio",
+    "allowed_origins": [
+        "chrome-extension://$extension_id$/"
+    ]
+}

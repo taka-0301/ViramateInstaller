@@ -12,8 +12,13 @@ using Microsoft.Win32;
 namespace Viramate {
     class Program {
         static void Main (string[] args) {
-            if (args.Length == 0)
-                InstallExtension();
+            try {
+                if (args.Length == 0)
+                    InstallExtension().Wait();
+            } catch (Exception exc) {
+                Console.Error.WriteLine("Uncaught: {0}", exc);
+                Environment.ExitCode = 1;
+            }
         }
 
         static string ExtensionId {
@@ -36,6 +41,13 @@ namespace Viramate {
             }
         }
 
+        static bool IsDebugMode {
+            get {
+                return (Debugger.IsAttached && ExecutablePath.EndsWith("\\bin\\Viramate.exe")) ||
+                    (Environment.GetCommandLineArgs()[0] == "--debug");
+            }
+        }
+
         static string InstallPath {
             get {
                 var folder = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
@@ -47,24 +59,66 @@ namespace Viramate {
             get {
                 var cb = System.Reflection.Assembly.GetExecutingAssembly().CodeBase;
                 var uri = new Uri(cb);
-                return Path.GetDirectoryName(uri.LocalPath);
+                return uri.LocalPath;
             }
         }
 
-        static void InstallExtension () {
+        static string ExecutableDirectory {
+            get {
+                return Path.GetDirectoryName(ExecutablePath);
+            }
+        }
+
+        static async Task UpdateExtensionFiles (bool cleanInstall) {
+            Directory.CreateDirectory(InstallPath);
+
+            if (IsDebugMode) {
+                var sourcePath = Path.GetFullPath(Path.Combine(ExecutableDirectory, "..", "..", "ext"));
+                Console.Write($"Copying from {sourcePath} to {InstallPath} ");
+                var allFiles = Directory.GetFiles(sourcePath, "*", SearchOption.AllDirectories)
+                    .Where(f => !f.Contains("\\ext\\ts\\"));
+                foreach (var f in allFiles) {
+                    var localPath = Path.GetFullPath(f).Replace(sourcePath, "").Substring(1);
+                    var destinationPath = Path.Combine(InstallPath, localPath);
+                    Directory.CreateDirectory(Path.GetDirectoryName(destinationPath));
+                    File.Copy(f, destinationPath, true);
+                    Console.Write(".");
+                }
+                Console.WriteLine();
+                Console.WriteLine("done.");
+                // Directory.GetFiles(
+            }
+
+            return;
+        }
+
+        static async Task InstallExtension () {
+            if (IsDebugMode)
+                Console.WriteLine("// DEBUG MODE");
             Console.WriteLine("Installing extension. This'll take a moment...");
+
+            await UpdateExtensionFiles(true);
 
             Console.WriteLine($"Extension id: {ExtensionId}");
 
+            var manifestText = File.ReadAllText(Path.Combine(ExecutableDirectory, "nmh.json"));
+            manifestText = manifestText
+                .Replace(
+                    "$executable_path$", 
+                    ExecutablePath.Replace("\\", "\\\\").Replace("\"", "\\\"")
+                ).Replace(
+                    "$extension_id$", ExtensionId
+                );
+            var manifestPath = Path.Combine(InstallPath, "nmh.json");
+            File.WriteAllText(manifestPath, manifestText);
+
             const string keyName = @"Software\Google\Chrome\NativeMessagingHosts\viramate";
             using (var key = Registry.CurrentUser.CreateSubKey(keyName, true)) {
-                var manifestPath = Path.Combine(ExecutablePath, "nmh.json");
-
                 Console.WriteLine($"{keyName}\\@ = {manifestPath}");
                 key.SetValue(null, manifestPath);
             }
 
-            var helpFilePath = Path.Combine(ExecutablePath, "Help", "index.html");
+            var helpFilePath = Path.Combine(ExecutableDirectory, "Help", "index.html");
             var text = File.ReadAllText(helpFilePath);
             text = Regex.Replace(text, @"\<pre\ id='extension_path'>[^<]*\</pre\>", @"<pre id='extension_path'>" + InstallPath + "</pre>");
             File.WriteAllText(helpFilePath, text);
