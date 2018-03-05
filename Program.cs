@@ -5,6 +5,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Net;
+using System.Reflection;
 using System.Security.Principal;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -15,8 +16,11 @@ using Newtonsoft.Json;
 namespace Viramate {
     class Program {
         static bool Running = true;
+        static Assembly MyAssembly;
 
         static void Main (string[] args) {
+            MyAssembly = Assembly.GetExecutingAssembly();
+
             try {
                 if ((args.Length == 0) || !args[0].StartsWith("chrome-extension://"))
                     InstallExtension().Wait();
@@ -80,7 +84,7 @@ namespace Viramate {
 
         static string ExecutablePath {
             get {
-                var cb = System.Reflection.Assembly.GetExecutingAssembly().CodeBase;
+                var cb = MyAssembly.CodeBase;
                 var uri = new Uri(cb);
                 return uri.LocalPath;
             }
@@ -106,18 +110,22 @@ namespace Viramate {
             });
         }
 
-        static Task UpdateFromZipFile (string sourcePath) {
-            return Task.Run(() => {
-                using (var zf = ZipFile.OpenRead(sourcePath))
-                foreach (var entry in zf.Entries) {
-                    if (entry.FullName.EndsWith("\\") || entry.FullName.EndsWith("/"))
-                        continue;
+        static async Task UpdateFromZipFile (string sourcePath) {
+            using (var s = File.OpenRead(sourcePath))
+            using (var zf = new ZipArchive(s, ZipArchiveMode.Read, true, Encoding.UTF8))
+            foreach (var entry in zf.Entries) {
+                if (entry.FullName.EndsWith("\\") || entry.FullName.EndsWith("/"))
+                    continue;
 
-                    var destFilename = Path.Combine(InstallPath, entry.FullName);
-                    Directory.CreateDirectory(Path.GetDirectoryName(destFilename));
-                    entry.ExtractToFile(destFilename, true);
-                }
-            });
+                var destFilename = Path.Combine(InstallPath, entry.FullName);
+                Directory.CreateDirectory(Path.GetDirectoryName(destFilename));
+
+                using (var src = entry.Open())
+                using (var dst = File.OpenWrite(destFilename))
+                    await src.CopyToAsync(dst);
+
+                File.SetLastWriteTimeUtc(destFilename, entry.LastWriteTime.UtcDateTime);
+            }
         }
 
         static async Task<string> DownloadLatest (string sourceUrl) {
@@ -159,13 +167,20 @@ namespace Viramate {
             }
         }
 
+        static Stream OpenResource (string name) {
+            return MyAssembly.GetManifestResourceStream("Viramate." + name.Replace("/", ".").Replace("\\", "."));
+        }
+
         static async Task InstallExtension () {
             Console.WriteLine("Installing extension. This'll take a moment...");
 
             if (await InstallExtensionFiles()) {
                 Console.WriteLine($"Extension id: {ExtensionId}");
 
-                var manifestText = File.ReadAllText(Path.Combine(ExecutableDirectory, "nmh.json"));
+                string manifestText;
+                using (var s = new StreamReader(OpenResource("nmh.json"), Encoding.UTF8))
+                    manifestText = s.ReadToEnd();
+
                 manifestText = manifestText
                     .Replace(
                         "$executable_path$", 
@@ -182,10 +197,29 @@ namespace Viramate {
                     key.SetValue(null, manifestPath);
                 }
 
-                var helpFilePath = Path.Combine(ExecutableDirectory, "Help", "index.html");
-                var text = File.ReadAllText(helpFilePath);
-                text = Regex.Replace(text, @"\<pre\ id='extension_path'>[^<]*\</pre\>", @"<pre id='extension_path'>" + InstallPath + "</pre>");
-                File.WriteAllText(helpFilePath, text);
+                Directory.CreateDirectory(Path.Combine(InstallPath, "Help"));
+                foreach (var n in MyAssembly.GetManifestResourceNames()) {
+                    if (!n.EndsWith(".png"))
+                        continue;
+
+                    var destinationPath = Path.Combine(InstallPath, n.Replace("Viramate.", "").Replace("Help.", "Help\\"));
+                    using (var src = MyAssembly.GetManifestResourceStream(n))
+                    using (var dst = File.OpenWrite(destinationPath))
+                        await src.CopyToAsync(dst);
+                }
+
+                string helpFileText;
+                using (var s = new StreamReader(OpenResource("Help/index.html"), Encoding.UTF8))
+                    helpFileText = s.ReadToEnd();
+
+                helpFileText = Regex.Replace(
+                    helpFileText, 
+                    @"\<pre\ id='extension_path'>[^<]*\</pre\>", 
+                    @"<pre id='extension_path'>" + InstallPath + "</pre>"
+                );
+
+                var helpFilePath = Path.Combine(InstallPath, "Help", "index.html");
+                File.WriteAllText(helpFilePath, helpFileText);
 
                 Console.WriteLine("Viramate has been downloaded. Opening install instructions...");
                 Process.Start(helpFilePath);
