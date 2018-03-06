@@ -37,6 +37,12 @@ namespace Viramate {
         )]
         public static extern int AttachConsole(int processId);
 
+        [DllImport(
+            "kernel32.dll", EntryPoint = "SetConsoleTitle", 
+            SetLastError = true, CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall
+        )]
+        public static extern int SetConsoleTitle(string title);
+
         private const int ATTACH_PARENT_PROCESS = -1;
         private const int STD_INPUT_HANDLE = -10;
         private const int STD_OUTPUT_HANDLE = -11;
@@ -64,8 +70,10 @@ namespace Viramate {
             if (Debugger.IsAttached) {
                 // No work necessary I think?
             } else {
-                if (AttachConsole(ATTACH_PARENT_PROCESS) == 0)
+                if (AttachConsole(ATTACH_PARENT_PROCESS) == 0) {
                     AllocConsole();
+                    SetConsoleTitle("Viramate Installer");
+                }
 
                 IntPtr
                     stdinHandle = GetStdHandle(STD_INPUT_HANDLE),
