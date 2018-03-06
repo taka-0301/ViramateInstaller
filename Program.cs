@@ -5,6 +5,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Net;
+using System.Net.Cache;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
@@ -41,7 +42,7 @@ namespace Viramate {
             MyAssembly = Assembly.GetExecutingAssembly();
 
             try {
-                if ((args.Length == 0) || !args[0].StartsWith("chrome-extension://")) {
+                if ((args.Length <= 1) || !args.Any(a => a.StartsWith("chrome-extension://"))) {
                     InitConsole();
                     InstallExtension().Wait();
                 } else
@@ -49,30 +50,30 @@ namespace Viramate {
             } catch (Exception exc) {
                 Console.Error.WriteLine("Uncaught: {0}", exc);
                 Environment.ExitCode = 1;
-
-                if (Debugger.IsAttached) {
-                    Console.Error.WriteLine("Press enter to exit.");
-                    Console.ReadLine();
-                }
             }
         }
 
         static void InitConsole () {
-            AllocConsole();
-            IntPtr
-                stdinHandle = GetStdHandle(STD_INPUT_HANDLE),
-                stdoutHandle = GetStdHandle(STD_OUTPUT_HANDLE), 
-                stderrHandle = GetStdHandle(STD_ERROR_HANDLE);
-            var stdinStream = new FileStream(new SafeFileHandle(stdinHandle, true), FileAccess.Read);
-            var stdoutStream = new FileStream(new SafeFileHandle(stdoutHandle, true), FileAccess.Write);
-            var stderrStream = new FileStream(new SafeFileHandle(stderrHandle, true), FileAccess.Write);
-            var stdin = new StreamReader(stdinStream, Encoding.UTF8);
-            var stdout = new StreamWriter(stdoutStream, Encoding.UTF8);
-            var stderr = new StreamWriter(stderrStream, Encoding.UTF8);
-            stdout.AutoFlush = stderr.AutoFlush = true;
-            Console.SetIn(stdin);
-            Console.SetOut(stdout);
-            Console.SetError(stderr);
+            if (Debugger.IsAttached) {
+                // No work necessary I think?
+            } else {
+                AllocConsole();
+                IntPtr
+                    stdinHandle = GetStdHandle(STD_INPUT_HANDLE),
+                    stdoutHandle = GetStdHandle(STD_OUTPUT_HANDLE), 
+                    stderrHandle = GetStdHandle(STD_ERROR_HANDLE);
+                var stdinStream = new FileStream(new SafeFileHandle(stdinHandle, true), FileAccess.Read);
+                var stdoutStream = new FileStream(new SafeFileHandle(stdoutHandle, true), FileAccess.Write);
+                var stderrStream = new FileStream(new SafeFileHandle(stderrHandle, true), FileAccess.Write);
+                var enc = new UTF8Encoding(false, false);
+                var stdin = new StreamReader(stdinStream, enc);
+                var stdout = new StreamWriter(stdoutStream, enc);
+                var stderr = new StreamWriter(stderrStream, enc);
+                stdout.AutoFlush = stderr.AutoFlush = true;
+                Console.SetIn(stdin);
+                Console.SetOut(stdout);
+                Console.SetError(stderr);
+            }
         }
 
         static string ExtensionId {
@@ -107,7 +108,7 @@ namespace Viramate {
                 if (args.Length <= 1)
                     return defaultDebug;
 
-                return (defaultDebug || (args[1] == "--disk")) && (args[1] != "--network");
+                return (defaultDebug || args.Contains("--disk")) && !args.Contains("--network");
             }
         }
 
@@ -136,6 +137,8 @@ namespace Viramate {
 
         public static Task UpdateFromFolder (string sourcePath) {
             return Task.Run(() => {
+                int i = 1;
+
                 var allFiles = Directory.GetFiles(sourcePath, "*", SearchOption.AllDirectories)
                     .Where(f => !f.Contains("\\ext\\ts\\"));
 
@@ -144,12 +147,17 @@ namespace Viramate {
                     var destinationPath = Path.Combine(InstallPath, localPath);
                     Directory.CreateDirectory(Path.GetDirectoryName(destinationPath));
                     File.Copy(f, destinationPath, true);
-                    Console.Error.WriteLine(destinationPath);
+                    if (i++ % 3 == 0)
+                        Console.Error.WriteLine(localPath);
+                    else
+                        Console.Error.Write(localPath + " ");
                 }
             });
         }
 
         public static async Task UpdateFromZipFile (string sourcePath) {
+            int i = 1;
+
             using (var s = File.OpenRead(sourcePath))
             using (var zf = new ZipArchive(s, ZipArchiveMode.Read, true, Encoding.UTF8))
             foreach (var entry in zf.Entries) {
@@ -164,18 +172,50 @@ namespace Viramate {
                     await src.CopyToAsync(dst);
 
                 File.SetLastWriteTimeUtc(destFilename, entry.LastWriteTime.UtcDateTime);
-                Console.Error.WriteLine(destFilename);
+                if (i++ % 3 == 0)
+                    Console.Error.WriteLine(entry.FullName);
+                else
+                    Console.Error.Write(entry.FullName + " ");
             }
         }
 
-        public static async Task<string> DownloadLatest (string sourceUrl) {
-            var wc = new WebClient();
+        private static HttpWebRequest MakeUpdateWebRequest (string url) {
+            var wr = WebRequest.CreateHttp(url);
+            wr.CachePolicy = new RequestCachePolicy(
+                Environment.GetCommandLineArgs().Contains("--force")
+                    ? RequestCacheLevel.Reload
+                    : RequestCacheLevel.Revalidate
+            );
+            return wr;
+        }
+
+        public struct DownloadResult {
+            public string ZipPath;
+            public bool   WasCached;
+        }
+
+        public static async Task<DownloadResult> DownloadLatest (string sourceUrl) {
+            var wr = MakeUpdateWebRequest(sourceUrl);
+            var resp = await wr.GetResponseAsync();
+            if (resp.IsFromCache)
+                Console.Error.WriteLine("no new update. Using cached update.");
+
             var zipPath = Path.Combine(InstallPath, "latest.zip");
-            await wc.DownloadFileTaskAsync(sourceUrl, zipPath + ".tmp");
+            using (var src = resp.GetResponseStream())
+            using (var dst = File.OpenWrite(zipPath + ".tmp"))
+                await src.CopyToAsync(dst);
+
             if (File.Exists(zipPath))
                 File.Delete(zipPath);
             File.Move(zipPath + ".tmp", zipPath);
-            return zipPath;
+
+            if (!resp.IsFromCache)
+                Console.Error.WriteLine(" done.");
+
+            return new DownloadResult {
+                ZipPath = zipPath,
+                WasCached = resp.IsFromCache
+            };
         }
 
         public static async Task<bool> InstallExtensionFiles (bool? installFromDisk = null) {
@@ -188,19 +228,18 @@ namespace Viramate {
                 Console.Error.WriteLine("done.");
                 return true;
             } else {
-                string zipPath = null;
+                DownloadResult result;
 
                 Console.Error.Write($"Downloading {SourceUrl}... ");
                 try {
-                    zipPath = await DownloadLatest(SourceUrl);
-                    Console.Error.WriteLine("done.");
+                    result = await DownloadLatest(SourceUrl);
                 } catch (WebException exc) {
                     Console.Error.WriteLine(exc.Message);
                     return false;
                 }
 
-                Console.Error.WriteLine($"Extracting {zipPath} to {InstallPath} ...");
-                await UpdateFromZipFile(zipPath);
+                Console.Error.WriteLine($"Extracting {result.ZipPath} to {InstallPath} ...");
+                await UpdateFromZipFile(result.ZipPath);
                 Console.Error.WriteLine($"done.");
 
                 return true;
@@ -212,10 +251,10 @@ namespace Viramate {
         }
 
         public static async Task InstallExtension () {
-            Console.Error.WriteLine("Installing extension. This'll take a moment...");
+            Console.WriteLine("Installing extension. This'll take a moment...");
 
             if (await InstallExtensionFiles()) {
-                Console.Error.WriteLine($"Extension id: {ExtensionId}");
+                Console.WriteLine($"Extension id: {ExtensionId}");
 
                 string manifestText;
                 using (var s = new StreamReader(OpenResource("nmh.json"), Encoding.UTF8))
@@ -233,14 +272,14 @@ namespace Viramate {
 
                 const string keyName = @"Software\Google\Chrome\NativeMessagingHosts\com.viramate.installer";
                 using (var key = Registry.CurrentUser.CreateSubKey(keyName, true)) {
-                    Console.Error.WriteLine($"{keyName}\\@ = {manifestPath}");
+                    Console.WriteLine($"{keyName}\\@ = {manifestPath}");
                     key.SetValue(null, manifestPath);
                 }
 
                 try {
                     WebSocketServer.SetupFirewallRule();
                 } catch (Exception exc) {
-                    Console.Error.WriteLine("Failed to install firewall rule: {0}", exc);
+                    Console.WriteLine("Failed to install firewall rule: {0}", exc);
                 }
 
                 Directory.CreateDirectory(Path.Combine(InstallPath, "Help"));
@@ -267,13 +306,16 @@ namespace Viramate {
                 var helpFilePath = Path.Combine(InstallPath, "Help", "index.html");
                 File.WriteAllText(helpFilePath, helpFileText);
 
-                Console.Error.WriteLine("Viramate has been downloaded. Opening install instructions...");
+                Console.WriteLine($"Viramate v{ReadManifestVersion()} has been downloaded. Opening install instructions...");
                 Process.Start(helpFilePath);
             } else {
-                Console.Error.WriteLine("Failed to install extension.");
+                Console.WriteLine("Failed to install extension.");
             }
-            Console.Error.WriteLine("Press enter to exit.");
-            Console.ReadLine();
+
+            if (!Debugger.IsAttached) {
+                Console.WriteLine("Press enter to exit.");
+                Console.ReadLine();
+            }
         }
 
         static void MessagingHostMainLoop () {
