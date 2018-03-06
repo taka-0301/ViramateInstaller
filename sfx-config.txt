@@ -1,0 +1,6 @@
+;!@Install@!UTF-8!
+Title="Viramate"
+BeginPrompt="Do you want to install Viramate?"
+ExecuteFile="cmd"
+ExecuteParameters="/C sfx-bootstrap.bat"
+;!@InstallEnd@!

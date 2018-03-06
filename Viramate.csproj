@@ -79,9 +79,14 @@
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <PropertyGroup>
     <PostBuildEvent>del "$(TargetDir)Newtonsoft.Json.xml"
-"$(TargetDir)..\third-party\7z.exe" a "$(TargetDir)..\setup.zip" "$(TargetDir)*"</PostBuildEvent>
+"$(TargetDir)..\third-party\7za.exe" a "$(TargetDir)..\built\installer.zip" "$(TargetDir)*"
+"$(TargetDir)..\third-party\7za.exe" a "$(TargetDir)..\built\setup.7z" "$(TargetDir)*" "$(TargetDir)..\sfx-bootstrap.bat"
+copy /b "$(TargetDir)..\third-party\7zS.sfx" + "$(TargetDir)..\sfx-config.txt" + "$(TargetDir)..\built\setup.7z" "$(TargetDir)..\built\setup.exe"
+del "$(TargetDir)..\built\setup.7z"</PostBuildEvent>
   </PropertyGroup>
   <PropertyGroup>
-    <PreBuildEvent>del "$(TargetDir)..\setup.zip"</PreBuildEvent>
+    <PreBuildEvent>del "$(TargetDir)..\built\installer.zip"
+del "$(TargetDir)..\built\setup.7z"
+del "$(TargetDir)..\built\setup.exe"</PreBuildEvent>
   </PropertyGroup>
 </Project>

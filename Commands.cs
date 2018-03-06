@@ -84,7 +84,7 @@ namespace Viramate {
             if (resp.IsFromCache)
                 Console.WriteLine("no new update. Using cached update.");
 
-            var zipPath = Path.Combine(InstallPath, resp.ResponseUri.LocalPath);
+            var zipPath = Path.Combine(InstallPath, Path.GetFileName(resp.ResponseUri.LocalPath));
             using (var src = resp.GetResponseStream())
             using (var dst = File.OpenWrite(zipPath + ".tmp"))
                 await src.CopyToAsync(dst);
@@ -119,7 +119,7 @@ namespace Viramate {
 
                 var psi = new ProcessStartInfo(
                     "cmd", 
-                    "/C \"timeout /T 2 && echo Updating Viramate Installer... && " +
+                    "/C \"timeout /T 5 && echo Updating Viramate Installer... && " +
                     $"copy /Y \"{Path.Combine(newVersionDirectory, "*")}\" \"{ExecutableDirectory}\" && echo Update OK.\""
                 ) {
                     CreateNoWindow = false,
@@ -174,7 +174,10 @@ namespace Viramate {
 
         public static async Task InstallExtension () {
             Console.WriteLine();
-            Console.WriteLine($"-- Viramate Installer v{MyAssembly.GetName().Version} --");
+            Console.WriteLine($"Viramate Installer v{MyAssembly.GetName().Version}");
+            if (Environment.GetCommandLineArgs().Contains("--version"))
+                return;
+
             Console.WriteLine("Installing extension. This'll take a moment...");
 
             if (await InstallExtensionFiles(false, null) != InstallResult.Failed) {

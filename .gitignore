@@ -5,3 +5,5 @@
 *.user
 /setup.zip
 /third-party/7z.exe
+/built
+/third-party
