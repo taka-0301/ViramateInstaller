@@ -15,12 +15,16 @@ using NetFwTypeLib;
 
 namespace Viramate {
     public class WebSocketServer : IDisposable {
+        public TimeSpan IdleTimeout = TimeSpan.FromMinutes(1);
+
         public HttpListener Listener { get; private set; }
         public bool IsDisposed { get; private set; }
 
         private readonly object Lock = new object();
 
         public string Url = "ws://127.0.0.1:8678/";
+
+        private DateTime LastActivity = default(DateTime);
 
         public WebSocketServer () {
             Init();
@@ -106,7 +110,7 @@ namespace Viramate {
 
             Console.Error.WriteLine("ws connect {0}", context.Request.RawUrl);
 
-            SocketLoop(context);
+            RequestTask(context);
         }
 
         private void Init () {
@@ -114,12 +118,21 @@ namespace Viramate {
             Listener.Prefixes.Add(Url.Replace("ws:", "http:"));
         }
 
+        private async Task IdleTimeoutTask () {
+            await Task.Delay(IdleTimeout);
+            var timeIdle = DateTime.UtcNow - LastActivity;
+            if (timeIdle > IdleTimeout) {
+                Console.WriteLine("Shutting down due to idle timeout.");
+                this.Dispose();
+            }
+        }
+
         private static Task Send (WebSocket ws, string text) {
             var buffer = Encoding.UTF8.GetBytes(text);
             return ws.SendAsync(new ArraySegment<byte>(buffer), WebSocketMessageType.Text, true, CancellationToken.None);
         }
 
-        private async Task SocketLoop (HttpListenerContext context) {
+        private async Task RequestTask (HttpListenerContext context) {
             HttpListenerWebSocketContext wsc = null;
             try {
                 try {
@@ -130,7 +143,7 @@ namespace Viramate {
                 }
                 var ws = wsc.WebSocket;
 
-                await MainLoop(ws);
+                await SocketMainLoop(ws);
             } catch (Exception exc) {
                 Console.Error.WriteLine(exc);
             } finally {
@@ -141,7 +154,9 @@ namespace Viramate {
             Console.Error.WriteLine("ws disconnect");
         }
 
-        private async Task MainLoop (WebSocket ws) {
+        private async Task SocketMainLoop (WebSocket ws) {
+            LastActivity = DateTime.UtcNow;
+
             var readBuffer = new ArraySegment<byte>(new byte[10240]);
 
             WebSocketReceiveResult wsrr;
@@ -173,6 +188,8 @@ namespace Viramate {
 
                 if (obj == null)
                     continue;
+
+                LastActivity = DateTime.UtcNow;
 
                 var msgType = (string)obj["type"];
                 int? id = null;
