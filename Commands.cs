@@ -119,8 +119,8 @@ namespace Viramate {
 
                 var psi = new ProcessStartInfo(
                     "cmd", 
-                    "/C \"timeout /T 5 && echo Updating Viramate Installer... && " +
-                    $"copy /Y \"{Path.Combine(newVersionDirectory, "*")}\" \"{ExecutableDirectory}\" && echo Update OK.\""
+                    "/C \"timeout /T 5 && echo Updating Viramate Installer... && taskkill /f /im viramate.exe & " +
+                    $"copy /Y \"{Path.Combine(newVersionDirectory, "*")}\" \"{ExecutableDirectory}\""
                 ) {
                     CreateNoWindow = false,
                     UseShellExecute = false,

@@ -55,7 +55,7 @@ namespace Viramate {
         private const int STD_ERROR_HANDLE = -12;
         private const int MY_CODE_PAGE = 437;
 
-        static Assembly MyAssembly;
+        public static Assembly MyAssembly;
         static bool IsRunningInsideCmd = false;
 
         public const string ExtensionSourceUrl = "http://luminance.org/vm/ext.zip";

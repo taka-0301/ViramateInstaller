@@ -180,28 +180,36 @@ namespace Viramate {
                     id = obj["id"].ToObject<int>();
 
                 switch (msgType) {
-                    case "getInstalledVersion": {
+                    case "getVersion": {
                         await Send(ws, new {
-                            result = Program.ReadManifestVersion(null),
+                            result = new {
+                                extension = Program.ReadManifestVersion(null),
+                                installer = Program.MyAssembly.GetName().Version.ToString()
+                            },
                             id = id
                         });
                         break;
                     }
 
+                    case "forceInstallUpdate":
                     case "installUpdate": {
                         try {
-                            var result = await Program.InstallExtensionFiles(true, null);
+                            var result = await Program.InstallExtensionFiles((msgType == "installUpdate"), null);
                             await Send(ws, new {
-                                result = result.ToString(),
+                                result = new {
+                                    result = result.ToString(),
+                                    installedVersion = Program.ReadManifestVersion(null)
+                                },
                                 id = id,
-                                installedVersion = Program.ReadManifestVersion(null)
                             });
                         } catch (Exception exc) {
                             Console.Error.WriteLine(exc);
                             await Send(ws, new {
-                                result = "Failed",
+                                result = new {
+                                    result = "Failed",
+                                    error = exc.Message
+                                },
                                 id = id,
-                                error = exc.Message
                             });
                         }
                         break;
@@ -211,17 +219,21 @@ namespace Viramate {
                         try {
                             var result = await Program.DownloadLatest(Program.ExtensionSourceUrl);
                             await Send(ws, new {
-                                ok = true,
+                                result = new {
+                                    ok = true,
+                                    installedVersion = Program.ReadManifestVersion(null),
+                                    downloadedVersion = Program.ReadManifestVersion(result.ZipPath)
+                                },
                                 id = id,
-                                installedVersion = Program.ReadManifestVersion(null),
-                                downloadedVersion = Program.ReadManifestVersion(result.ZipPath)
                             });
                         } catch (Exception exc) {
                             Console.Error.WriteLine(exc);
                             await Send(ws, new {
-                                ok = false,
+                                result = new {
+                                    ok = false,
+                                    error = exc.Message
+                                },
                                 id = id,
-                                error = exc.Message
                             });
                         }
                         break;
@@ -252,7 +264,10 @@ namespace Viramate {
 
                     default:
                         Console.Error.WriteLine("Unhandled message {0}", msgType);
-
+                        if (id != null)
+                            await Send(ws, new {
+                                id = id
+                            });
                         break;
                 }
             }
