@@ -237,17 +237,19 @@ namespace Viramate {
                 if (!Environment.GetCommandLineArgs().Contains("--nohelp")) {
                     Console.WriteLine("Opening install instructions...");
                     Process.Start(helpFilePath);
+                } else if (!Debugger.IsAttached && !IsRunningInsideCmd) {
+                    Console.WriteLine("Press enter to exit.");
                 }
             } else {
-                Console.WriteLine("Failed to install extension.");
+                if (!Debugger.IsAttached && !IsRunningInsideCmd) {
+                    Console.WriteLine("Failed to install extension. Press enter to exit.");
+                    Console.ReadLine();
+                } else {
+                    Console.WriteLine("Failed to install extension.");
+                }
             }
 
             await AutoUpdateInstaller();
-
-            if (!Debugger.IsAttached && !IsRunningInsideCmd) {
-                Console.WriteLine("Press enter to exit.");
-                Console.ReadLine();
-            }
         }
     }
 
