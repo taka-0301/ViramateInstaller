@@ -175,7 +175,81 @@ namespace Viramate {
                     continue;
 
                 var msgType = (string)obj["type"];
+                int? id = null;
+                if (obj.ContainsKey("id"))
+                    id = obj["id"].ToObject<int>();
+
                 switch (msgType) {
+                    case "getInstalledVersion": {
+                        await Send(ws, new {
+                            result = Program.ReadManifestVersion(null),
+                            id = id
+                        });
+                        break;
+                    }
+
+                    case "installUpdate": {
+                        try {
+                            var result = await Program.InstallExtensionFiles(true, null);
+                            await Send(ws, new {
+                                result = result.ToString(),
+                                id = id,
+                                installedVersion = Program.ReadManifestVersion(null)
+                            });
+                        } catch (Exception exc) {
+                            Console.Error.WriteLine(exc);
+                            await Send(ws, new {
+                                result = "Failed",
+                                id = id,
+                                error = exc.Message
+                            });
+                        }
+                        break;
+                    }
+
+                    case "downloadNewUpdate": {
+                        try {
+                            var result = await Program.DownloadLatest(Program.ExtensionSourceUrl);
+                            await Send(ws, new {
+                                ok = true,
+                                id = id,
+                                installedVersion = Program.ReadManifestVersion(null),
+                                downloadedVersion = Program.ReadManifestVersion(result.ZipPath)
+                            });
+                        } catch (Exception exc) {
+                            Console.Error.WriteLine(exc);
+                            await Send(ws, new {
+                                ok = false,
+                                id = id,
+                                error = exc.Message
+                            });
+                        }
+                        break;
+                    }
+
+                    case "autoUpdateInstaller": {
+                        try {
+                            var result = await Program.AutoUpdateInstaller();
+                            await Send(ws, new {
+                                result = result,
+                                id = id
+                            });
+
+                            if (result) {
+                                Console.WriteLine("Exiting in response to successful installer update request.");
+                                Environment.Exit(0);
+                                return;
+                            }
+                        } catch (Exception exc) {
+                            Console.Error.WriteLine(exc);
+                            await Send(ws, new {
+                                result = false,
+                                id = id
+                            });
+                        }
+                        break;
+                    }
+
                     default:
                         Console.Error.WriteLine("Unhandled message {0}", msgType);
 
