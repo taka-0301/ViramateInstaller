@@ -31,6 +31,13 @@ namespace Viramate {
         )]
         public static extern int AllocConsole();
 
+        [DllImport(
+            "kernel32.dll", EntryPoint = "AttachConsole", 
+            SetLastError = true, CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall
+        )]
+        public static extern int AttachConsole(int processId);
+
+        private const int ATTACH_PARENT_PROCESS = -1;
         private const int STD_INPUT_HANDLE = -10;
         private const int STD_OUTPUT_HANDLE = -11;
         private const int STD_ERROR_HANDLE = -12;
@@ -57,7 +64,9 @@ namespace Viramate {
             if (Debugger.IsAttached) {
                 // No work necessary I think?
             } else {
-                AllocConsole();
+                if (AttachConsole(ATTACH_PARENT_PROCESS) == 0)
+                    AllocConsole();
+
                 IntPtr
                     stdinHandle = GetStdHandle(STD_INPUT_HANDLE),
                     stdoutHandle = GetStdHandle(STD_OUTPUT_HANDLE), 
