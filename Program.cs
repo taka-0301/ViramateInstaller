@@ -23,25 +23,31 @@ namespace Viramate {
             "kernel32.dll", EntryPoint = "GetStdHandle", 
             SetLastError = true, CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall
         )]
-        public static extern IntPtr GetStdHandle(int nStdHandle);
+        public static extern IntPtr GetStdHandle (int nStdHandle);
 
         [DllImport(
             "kernel32.dll", EntryPoint = "AllocConsole", 
             SetLastError = true, CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall
         )]
-        public static extern int AllocConsole();
+        public static extern int AllocConsole ();
 
         [DllImport(
             "kernel32.dll", EntryPoint = "AttachConsole", 
             SetLastError = true, CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall
         )]
-        public static extern int AttachConsole(int processId);
+        public static extern int AttachConsole (int processId);
 
         [DllImport(
             "kernel32.dll", EntryPoint = "SetConsoleTitle", 
             SetLastError = true, CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall
         )]
-        public static extern int SetConsoleTitle(string title);
+        public static extern int SetConsoleTitle (string title);
+
+        [DllImport(
+            "kernel32.dll", EntryPoint = "TerminateProcess", 
+            SetLastError = true, CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall
+        )]
+        public static extern int TerminateProcess (int processId, int exitCode);
 
         private const int ATTACH_PARENT_PROCESS = -1;
         private const int STD_INPUT_HANDLE = -10;
@@ -50,6 +56,10 @@ namespace Viramate {
         private const int MY_CODE_PAGE = 437;
 
         static Assembly MyAssembly;
+        static bool IsRunningInsideCmd = false;
+
+        const string SourceUrl = "http://luminance.org/vm/ext.zip";
+        const string InstallerSourceUrl = "http://luminance.org/vm/setup.zip";
 
         static void Main (string[] args) {
             MyAssembly = Assembly.GetExecutingAssembly();
@@ -63,6 +73,9 @@ namespace Viramate {
             } catch (Exception exc) {
                 Console.Error.WriteLine("Uncaught: {0}", exc);
                 Environment.ExitCode = 1;
+
+                // HACK: Assume the crash might be an installer bug, so try to install an update.
+                AutoUpdateInstaller().Wait();
             }
         }
 
@@ -73,6 +86,8 @@ namespace Viramate {
                 if (AttachConsole(ATTACH_PARENT_PROCESS) == 0) {
                     AllocConsole();
                     SetConsoleTitle("Viramate Installer");
+                } else {
+                    IsRunningInsideCmd = true;
                 }
 
                 IntPtr
@@ -118,9 +133,15 @@ namespace Viramate {
             }
         }
 
+        static bool IsRunningDirectlyFromBuild {
+            get {
+                return (Debugger.IsAttached || ExecutablePath.EndsWith("ViramateInstaller\\bin\\Viramate.exe"));
+            }
+        }
+
         static bool InstallFromDisk {
             get {
-                var defaultDebug = (Debugger.IsAttached || ExecutablePath.EndsWith("ViramateInstaller\\bin\\Viramate.exe"));
+                var defaultDebug = IsRunningDirectlyFromBuild;
                 var args = Environment.GetCommandLineArgs();
                 if (args.Length <= 1)
                     return defaultDebug;
@@ -128,8 +149,6 @@ namespace Viramate {
                 return (defaultDebug || args.Contains("--disk")) && !args.Contains("--network");
             }
         }
-
-        const string SourceUrl = "http://luminance.org/vm/ext.zip";
 
         static string InstallPath {
             get {
@@ -165,23 +184,23 @@ namespace Viramate {
                     Directory.CreateDirectory(Path.GetDirectoryName(destinationPath));
                     File.Copy(f, destinationPath, true);
                     if (i++ % 3 == 0)
-                        Console.Error.WriteLine(localPath);
+                        Console.WriteLine(localPath);
                     else
-                        Console.Error.Write(localPath + " ");
+                        Console.Write(localPath + " ");
                 }
             });
         }
 
-        public static async Task UpdateFromZipFile (string sourcePath) {
+        public static async Task ExtractZipFile (string zipFile, string destinationPath) {
             int i = 1;
 
-            using (var s = File.OpenRead(sourcePath))
+            using (var s = File.OpenRead(zipFile))
             using (var zf = new ZipArchive(s, ZipArchiveMode.Read, true, Encoding.UTF8))
             foreach (var entry in zf.Entries) {
                 if (entry.FullName.EndsWith("\\") || entry.FullName.EndsWith("/"))
                     continue;
 
-                var destFilename = Path.Combine(InstallPath, entry.FullName);
+                var destFilename = Path.Combine(destinationPath, entry.FullName);
                 Directory.CreateDirectory(Path.GetDirectoryName(destFilename));
 
                 using (var src = entry.Open())
@@ -190,9 +209,9 @@ namespace Viramate {
 
                 File.SetLastWriteTimeUtc(destFilename, entry.LastWriteTime.UtcDateTime);
                 if (i++ % 3 == 0)
-                    Console.Error.WriteLine(entry.FullName);
+                    Console.WriteLine(entry.FullName);
                 else
-                    Console.Error.Write(entry.FullName + " ");
+                    Console.Write(entry.FullName + " ");
             }
         }
 
@@ -215,7 +234,7 @@ namespace Viramate {
             var wr = MakeUpdateWebRequest(sourceUrl);
             var resp = await wr.GetResponseAsync();
             if (resp.IsFromCache)
-                Console.Error.WriteLine("no new update. Using cached update.");
+                Console.WriteLine("no new update. Using cached update.");
 
             var zipPath = Path.Combine(InstallPath, "latest.zip");
             using (var src = resp.GetResponseStream())
@@ -227,7 +246,7 @@ namespace Viramate {
             File.Move(zipPath + ".tmp", zipPath);
 
             if (!resp.IsFromCache)
-                Console.Error.WriteLine(" done.");
+                Console.WriteLine(" done.");
 
             return new DownloadResult {
                 ZipPath = zipPath,
@@ -235,29 +254,64 @@ namespace Viramate {
             };
         }
 
+        public static async Task<bool> AutoUpdateInstaller () {
+            try {
+                Console.Write($"Checking for installer update ... ");
+
+                var result = await DownloadLatest(InstallerSourceUrl);
+                if (result.WasCached)
+                    return false;
+
+                var newVersionDirectory = Path.Combine(InstallPath, "Installer Update");
+                Directory.CreateDirectory(newVersionDirectory);
+
+                Console.WriteLine($"Extracting {result.ZipPath} to {newVersionDirectory} ...");
+                await ExtractZipFile(result.ZipPath, newVersionDirectory);
+                Console.WriteLine($"done.");
+
+                var psi = new ProcessStartInfo(
+                    "cmd", 
+                    "/C \"timeout /T 2 && echo Updating Viramate Installer... && " +
+                    $"copy /Y \"{Path.Combine(newVersionDirectory, "*")}\" \"{ExecutableDirectory}\" && echo Update OK.\""
+                ) {
+                    CreateNoWindow = false,
+                    UseShellExecute = false,
+                    WorkingDirectory = ExecutableDirectory
+                };
+
+                using (var proc = Process.Start(psi))
+                    Console.WriteLine("Installer will be updated momentarily.");
+
+                return true;
+            } catch (Exception exc) {
+                Console.Error.WriteLine(exc.Message);
+                return false;
+            }
+        }
+
         public static async Task<bool> InstallExtensionFiles (bool? installFromDisk = null) {
             Directory.CreateDirectory(InstallPath);
 
             if (installFromDisk.GetValueOrDefault(InstallFromDisk)) {
                 var sourcePath = Path.GetFullPath(Path.Combine(ExecutableDirectory, "..", "..", "ext"));
-                Console.Error.WriteLine($"Copying from {sourcePath} to {InstallPath} ...");
+                Console.WriteLine($"Copying from {sourcePath} to {InstallPath} ...");
                 await UpdateFromFolder(sourcePath);
-                Console.Error.WriteLine("done.");
+                Console.WriteLine("done.");
                 return true;
             } else {
                 DownloadResult result;
 
-                Console.Error.Write($"Downloading {SourceUrl}... ");
+                Console.Write($"Downloading {SourceUrl}... ");
                 try {
                     result = await DownloadLatest(SourceUrl);
-                } catch (WebException exc) {
+                } catch (Exception exc) {
                     Console.Error.WriteLine(exc.Message);
                     return false;
                 }
 
-                Console.Error.WriteLine($"Extracting {result.ZipPath} to {InstallPath} ...");
-                await UpdateFromZipFile(result.ZipPath);
-                Console.Error.WriteLine($"done.");
+                Console.WriteLine($"Extracting {result.ZipPath} to {InstallPath} ...");
+                await ExtractZipFile(result.ZipPath, InstallPath);
+                Console.WriteLine($"done.");
 
                 return true;
             }
@@ -268,6 +322,8 @@ namespace Viramate {
         }
 
         public static async Task InstallExtension () {
+            Console.WriteLine();
+            Console.WriteLine($"-- Viramate Installer v{MyAssembly.GetName().Version} --");
             Console.WriteLine("Installing extension. This'll take a moment...");
 
             if (await InstallExtensionFiles()) {
@@ -323,13 +379,18 @@ namespace Viramate {
                 var helpFilePath = Path.Combine(InstallPath, "Help", "index.html");
                 File.WriteAllText(helpFilePath, helpFileText);
 
-                Console.WriteLine($"Viramate v{ReadManifestVersion()} has been downloaded. Opening install instructions...");
-                Process.Start(helpFilePath);
+                Console.WriteLine($"Viramate v{ReadManifestVersion()} has been downloaded.");
+                if (!Environment.GetCommandLineArgs().Contains("--nohelp")) {
+                    Console.WriteLine("Opening install instructions...");
+                    Process.Start(helpFilePath);
+                }
             } else {
                 Console.WriteLine("Failed to install extension.");
             }
 
-            if (!Debugger.IsAttached) {
+            await AutoUpdateInstaller();
+
+            if (!Debugger.IsAttached && !IsRunningInsideCmd) {
                 Console.WriteLine("Press enter to exit.");
                 Console.ReadLine();
             }
@@ -341,6 +402,7 @@ namespace Viramate {
             var logFilePath = Path.Combine(InstallPath, "installer.log");
 
             using (var log = new StreamWriter(logFilePath, true, Encoding.UTF8)) {
+                Console.SetOut(log);
                 Console.SetError(log);
                 log.WriteLine($"{DateTime.UtcNow.ToLongTimeString()} > Installer started as native messaging host. Command line: {Environment.CommandLine}");
                 WriteMessage(log, stdout, new { type = "serverStarting" });

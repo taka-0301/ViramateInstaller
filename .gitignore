@@ -3,3 +3,5 @@
 /obj
 /packages
 *.user
+/setup.zip
+/third-party/7z.exe
