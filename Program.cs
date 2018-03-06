@@ -192,7 +192,7 @@ namespace Viramate {
                 } catch (Exception exc) {
                     log.WriteLine(exc);
                 } finally {
-                    log.WriteLine($"Exiting.");
+                    log.WriteLine($"{DateTime.UtcNow.ToLongTimeString()} > Exiting.");
                 }
 
                 log.Flush();

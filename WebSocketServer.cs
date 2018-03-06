@@ -46,6 +46,8 @@ namespace Viramate {
                 Console.Error.WriteLine("Failed to set-up firewall rule: {0}", exc);
             }
 
+            IdleTimeoutTask();
+
             HttpListener listener;
             while (!IsDisposed) {
                 lock (Lock)
@@ -119,11 +121,13 @@ namespace Viramate {
         }
 
         private async Task IdleTimeoutTask () {
-            await Task.Delay(IdleTimeout);
-            var timeIdle = DateTime.UtcNow - LastActivity;
-            if (timeIdle > IdleTimeout) {
-                Console.WriteLine("Shutting down due to idle timeout.");
-                this.Dispose();
+            while (!this.IsDisposed) {
+                await Task.Delay(IdleTimeout);
+                var timeIdle = DateTime.UtcNow - LastActivity;
+                if (timeIdle > IdleTimeout) {
+                    Console.WriteLine("Shutting down due to idle timeout.");
+                    this.Dispose();
+                }
             }
         }
 
