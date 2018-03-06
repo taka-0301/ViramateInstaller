@@ -6,35 +6,73 @@ using System.IO.Compression;
 using System.Linq;
 using System.Net;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Win32;
+using Microsoft.Win32.SafeHandles;
 using Newtonsoft.Json;
 
 namespace Viramate {
     class Program {
-        static bool Running = true;
+        [DllImport(
+            "kernel32.dll", EntryPoint = "GetStdHandle", 
+            SetLastError = true, CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall
+        )]
+        public static extern IntPtr GetStdHandle(int nStdHandle);
+
+        [DllImport(
+            "kernel32.dll", EntryPoint = "AllocConsole", 
+            SetLastError = true, CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall
+        )]
+        public static extern int AllocConsole();
+
+        private const int STD_INPUT_HANDLE = -10;
+        private const int STD_OUTPUT_HANDLE = -11;
+        private const int STD_ERROR_HANDLE = -12;
+        private const int MY_CODE_PAGE = 437;
+
         static Assembly MyAssembly;
 
         static void Main (string[] args) {
             MyAssembly = Assembly.GetExecutingAssembly();
 
             try {
-                if ((args.Length == 0) || !args[0].StartsWith("chrome-extension://"))
+                if ((args.Length == 0) || !args[0].StartsWith("chrome-extension://")) {
+                    InitConsole();
                     InstallExtension().Wait();
-                else
-                    MessagingHostMainLoop().Wait();
+                } else
+                    MessagingHostMainLoop();
             } catch (Exception exc) {
                 Console.Error.WriteLine("Uncaught: {0}", exc);
                 Environment.ExitCode = 1;
 
                 if (Debugger.IsAttached) {
-                    Console.WriteLine("Press enter to exit.");
+                    Console.Error.WriteLine("Press enter to exit.");
                     Console.ReadLine();
                 }
             }
+        }
+
+        static void InitConsole () {
+            AllocConsole();
+            IntPtr
+                stdinHandle = GetStdHandle(STD_INPUT_HANDLE),
+                stdoutHandle = GetStdHandle(STD_OUTPUT_HANDLE), 
+                stderrHandle = GetStdHandle(STD_ERROR_HANDLE);
+            var stdinStream = new FileStream(new SafeFileHandle(stdinHandle, true), FileAccess.Read);
+            var stdoutStream = new FileStream(new SafeFileHandle(stdoutHandle, true), FileAccess.Write);
+            var stderrStream = new FileStream(new SafeFileHandle(stderrHandle, true), FileAccess.Write);
+            var stdin = new StreamReader(stdinStream, Encoding.UTF8);
+            var stdout = new StreamWriter(stdoutStream, Encoding.UTF8);
+            var stderr = new StreamWriter(stderrStream, Encoding.UTF8);
+            stdout.AutoFlush = stderr.AutoFlush = true;
+            Console.SetIn(stdin);
+            Console.SetOut(stdout);
+            Console.SetError(stderr);
         }
 
         static string ExtensionId {
@@ -96,7 +134,7 @@ namespace Viramate {
             }
         }
 
-        static Task UpdateFromFolder (string sourcePath) {
+        public static Task UpdateFromFolder (string sourcePath) {
             return Task.Run(() => {
                 var allFiles = Directory.GetFiles(sourcePath, "*", SearchOption.AllDirectories)
                     .Where(f => !f.Contains("\\ext\\ts\\"));
@@ -106,11 +144,12 @@ namespace Viramate {
                     var destinationPath = Path.Combine(InstallPath, localPath);
                     Directory.CreateDirectory(Path.GetDirectoryName(destinationPath));
                     File.Copy(f, destinationPath, true);
+                    Console.Error.WriteLine(destinationPath);
                 }
             });
         }
 
-        static async Task UpdateFromZipFile (string sourcePath) {
+        public static async Task UpdateFromZipFile (string sourcePath) {
             using (var s = File.OpenRead(sourcePath))
             using (var zf = new ZipArchive(s, ZipArchiveMode.Read, true, Encoding.UTF8))
             foreach (var entry in zf.Entries) {
@@ -125,10 +164,11 @@ namespace Viramate {
                     await src.CopyToAsync(dst);
 
                 File.SetLastWriteTimeUtc(destFilename, entry.LastWriteTime.UtcDateTime);
+                Console.Error.WriteLine(destFilename);
             }
         }
 
-        static async Task<string> DownloadLatest (string sourceUrl) {
+        public static async Task<string> DownloadLatest (string sourceUrl) {
             var wc = new WebClient();
             var zipPath = Path.Combine(InstallPath, "latest.zip");
             await wc.DownloadFileTaskAsync(sourceUrl, zipPath + ".tmp");
@@ -138,30 +178,30 @@ namespace Viramate {
             return zipPath;
         }
 
-        static async Task<bool> InstallExtensionFiles () {
+        public static async Task<bool> InstallExtensionFiles (bool? installFromDisk = null) {
             Directory.CreateDirectory(InstallPath);
 
-            if (InstallFromDisk) {
+            if (installFromDisk.GetValueOrDefault(InstallFromDisk)) {
                 var sourcePath = Path.GetFullPath(Path.Combine(ExecutableDirectory, "..", "..", "ext"));
-                Console.Write($"Copying from {sourcePath} to {InstallPath} ... ");
+                Console.Error.WriteLine($"Copying from {sourcePath} to {InstallPath} ...");
                 await UpdateFromFolder(sourcePath);
-                Console.WriteLine("done.");
+                Console.Error.WriteLine("done.");
                 return true;
             } else {
                 string zipPath = null;
 
-                Console.Write($"Downloading {SourceUrl}... ");
+                Console.Error.Write($"Downloading {SourceUrl}... ");
                 try {
                     zipPath = await DownloadLatest(SourceUrl);
-                    Console.WriteLine("done.");
+                    Console.Error.WriteLine("done.");
                 } catch (WebException exc) {
-                    Console.WriteLine(exc.Message);
+                    Console.Error.WriteLine(exc.Message);
                     return false;
                 }
 
-                Console.Write($"Extracting {zipPath} to {InstallPath} ... ");
+                Console.Error.WriteLine($"Extracting {zipPath} to {InstallPath} ...");
                 await UpdateFromZipFile(zipPath);
-                Console.WriteLine($"done.");
+                Console.Error.WriteLine($"done.");
 
                 return true;
             }
@@ -171,11 +211,11 @@ namespace Viramate {
             return MyAssembly.GetManifestResourceStream("Viramate." + name.Replace("/", ".").Replace("\\", "."));
         }
 
-        static async Task InstallExtension () {
-            Console.WriteLine("Installing extension. This'll take a moment...");
+        public static async Task InstallExtension () {
+            Console.Error.WriteLine("Installing extension. This'll take a moment...");
 
             if (await InstallExtensionFiles()) {
-                Console.WriteLine($"Extension id: {ExtensionId}");
+                Console.Error.WriteLine($"Extension id: {ExtensionId}");
 
                 string manifestText;
                 using (var s = new StreamReader(OpenResource("nmh.json"), Encoding.UTF8))
@@ -193,8 +233,14 @@ namespace Viramate {
 
                 const string keyName = @"Software\Google\Chrome\NativeMessagingHosts\com.viramate.installer";
                 using (var key = Registry.CurrentUser.CreateSubKey(keyName, true)) {
-                    Console.WriteLine($"{keyName}\\@ = {manifestPath}");
+                    Console.Error.WriteLine($"{keyName}\\@ = {manifestPath}");
                     key.SetValue(null, manifestPath);
+                }
+
+                try {
+                    WebSocketServer.SetupFirewallRule();
+                } catch (Exception exc) {
+                    Console.Error.WriteLine("Failed to install firewall rule: {0}", exc);
                 }
 
                 Directory.CreateDirectory(Path.Combine(InstallPath, "Help"));
@@ -221,83 +267,90 @@ namespace Viramate {
                 var helpFilePath = Path.Combine(InstallPath, "Help", "index.html");
                 File.WriteAllText(helpFilePath, helpFileText);
 
-                Console.WriteLine("Viramate has been downloaded. Opening install instructions...");
+                Console.Error.WriteLine("Viramate has been downloaded. Opening install instructions...");
                 Process.Start(helpFilePath);
             } else {
-                Console.WriteLine("Failed to install extension.");
+                Console.Error.WriteLine("Failed to install extension.");
             }
-            Console.WriteLine("Press enter to exit.");
+            Console.Error.WriteLine("Press enter to exit.");
             Console.ReadLine();
+        }
+
+        static void MessagingHostMainLoop () {
+            var stdin = Console.OpenStandardInput();
+            var stdout = Console.OpenStandardOutput();
+            var logFilePath = Path.Combine(InstallPath, "installer.log");
+
+            using (var log = new StreamWriter(logFilePath, true, Encoding.UTF8)) {
+                Console.SetError(log);
+                log.WriteLine($"{DateTime.UtcNow.ToLongTimeString()} > Installer started as native messaging host. Command line: {Environment.CommandLine}");
+                WriteMessage(log, stdout, new { type = "serverStarting" });
+                log.Flush();
+                log.AutoFlush = true;
+
+                try {
+                    var wss = new WebSocketServer();
+                    var t = wss.Run();
+                    WriteMessage(log, stdout, new { type = "serverStarted", url = wss.Url });
+                    t.Wait();
+                } catch (Exception exc) {
+                    log.WriteLine(exc);
+                } finally {
+                    log.WriteLine($"Exiting.");
+                }
+
+                log.Flush();
+            }
+
+            stdout.Flush();
+            stdout.Close();
+            stdin.Close();
+        }
+
+        static string ReadManifestVersion () {
+            var filename = Path.Combine(InstallPath, "manifest.json");
+            try {
+                var json = File.ReadAllText(filename, Encoding.UTF8);
+                return JsonConvert.DeserializeObject<ManifestFragment>(json).version;
+            } catch (Exception exc) {
+                Console.Error.WriteLine(exc);
+                return null;
+            }
+        }
+
+        static T ReadMessage<T> (Stream stream)
+            where T : class 
+        {
+            var inBuf = new byte[4096000];
+            if (stream.Read(inBuf, 0, inBuf.Length) == 0)
+                return null;
+
+            var lengthBytes = (int)BitConverter.ToUInt32(inBuf, 0);
+            var json = Encoding.UTF8.GetString(inBuf, 4, lengthBytes);
+            var result = JsonConvert.DeserializeObject<T>(json);
+            return result;
+        }
+
+        static void WriteMessage<T> (StreamWriter log, Stream stream, T message)
+            where T : class
+        {
+            var json = JsonConvert.SerializeObject(message);
+            var messageByteLength = Encoding.UTF8.GetByteCount(json);
+            var messageBuf = new byte[messageByteLength + 4];
+            Array.Copy(BitConverter.GetBytes((uint)messageByteLength), messageBuf, 4);
+            Encoding.UTF8.GetBytes(json, 0, json.Length, messageBuf, 4);
+            stream.Write(messageBuf, 0, messageBuf.Length);
+            stream.Flush();
+            log.WriteLine($"Wrote {messageByteLength} byte(s) of JSON: {json}");
         }
 
         class Msg {
             public string type;
         }
 
-        static async Task MessagingHostMainLoop () {
-            var stdin = Console.OpenStandardInput();
-            var stdout = Console.OpenStandardOutput();
-            var logFilePath = Path.Combine(InstallPath, "installer.log");
-            using (var log = new StreamWriter(logFilePath, false, Encoding.UTF8)) {
-                log.AutoFlush = true;
-                await log.WriteLineAsync($"Installer started as native messaging host. Command line: {Environment.CommandLine}");
-
-                while (Running) {
-                    var msg = await ReadMessage<Msg>(stdin);
-                    if (msg == null) {
-                        await Task.Delay(100);
-                        continue;
-                    }
-
-                    await TryHandleMessage(log, stdout, msg);
-                }
-
-                await log.WriteLineAsync($"Exiting.");
-            }
-        }
-
-        static async Task TryHandleMessage (StreamWriter log, Stream stdout, Msg msg) {
-            await log.WriteLineAsync($"Handling message {msg.type}");
-
-            switch (msg.type) {
-                case "extension-startup":
-                    await WriteMessage(stdout, new { type = "installer-is-working", installFromDisk = InstallFromDisk });
-                    Running = false;
-                    return;
-                case "exit":
-                    await WriteMessage(stdout, new { type = "exiting" });
-                    Running = false;
-                    return;
-            }
-        }
-
-        static async Task<T> ReadMessage<T> (Stream stream)
-            where T : class 
-        {
-            var lengthBuf = new byte[4];
-            if (await stream.ReadAsync(lengthBuf, 0, 4) != 4)
-                return null;
-
-            var lengthBytes = BitConverter.ToInt32(lengthBuf, 0);
-            var messageBuf = new byte[lengthBytes];
-            if (await stream.ReadAsync(messageBuf, 0, lengthBytes) != lengthBytes)
-                return null;
-
-            var json = Encoding.UTF8.GetString(messageBuf);
-            var result = JsonConvert.DeserializeObject<T>(json);
-            return result;
-        }
-
-        static async Task WriteMessage<T> (Stream stream, T message)
-            where T : class
-        {
-            var json = JsonConvert.SerializeObject(message);
-            var messageByteLength = Encoding.UTF8.GetByteCount(json);
-            var messageBuf = new byte[messageByteLength + 4];
-            Array.Copy(BitConverter.GetBytes(messageByteLength), messageBuf, 4);
-            Encoding.UTF8.GetBytes(json, 0, json.Length, messageBuf, 4);
-            await stream.WriteAsync(messageBuf, 0, messageBuf.Length);
-            await stream.FlushAsync();
+        class ManifestFragment {
+            public string name;
+            public string version;
         }
     }
 }
