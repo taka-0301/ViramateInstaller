@@ -141,9 +141,8 @@ namespace Viramate {
             Directory.CreateDirectory(InstallPath);
 
             if (installFromDisk.GetValueOrDefault(InstallFromDisk)) {
-                var sourcePath = Path.GetFullPath(Path.Combine(ExecutableDirectory, "..", "..", "ext"));
-                Console.WriteLine($"Copying from {sourcePath} to {InstallPath} ...");
-                await UpdateFromFolder(sourcePath);
+                Console.WriteLine($"Copying from {DiskSourcePath} to {InstallPath} ...");
+                await UpdateFromFolder(DiskSourcePath);
                 Console.WriteLine("done.");
                 return InstallResult.Updated;
             } else {
@@ -173,6 +172,8 @@ namespace Viramate {
         }
 
         public static async Task InstallExtension () {
+            var allowAutoClose = true;
+
             Console.WriteLine();
             Console.WriteLine($"Viramate Installer v{MyAssembly.GetName().Version}");
             if (Environment.GetCommandLineArgs().Contains("--version"))
@@ -197,6 +198,17 @@ namespace Viramate {
                 var manifestPath = Path.Combine(InstallPath, "nmh.json");
                 File.WriteAllText(manifestPath, manifestText);
 
+                Directory.CreateDirectory(Path.Combine(InstallPath, "Help"));
+                foreach (var n in MyAssembly.GetManifestResourceNames()) {
+                    if (!n.EndsWith(".png"))
+                        continue;
+
+                    var destinationPath = Path.Combine(InstallPath, n.Replace("Viramate.", "").Replace("Help.", "Help\\"));
+                    using (var src = MyAssembly.GetManifestResourceStream(n))
+                    using (var dst = File.OpenWrite(destinationPath))
+                        await src.CopyToAsync(dst);
+                }
+
                 const string keyName = @"Software\Google\Chrome\NativeMessagingHosts\com.viramate.installer";
                 using (var key = Registry.CurrentUser.CreateSubKey(keyName, true)) {
                     Console.WriteLine($"{keyName}\\@ = {manifestPath}");
@@ -207,17 +219,7 @@ namespace Viramate {
                     WebSocketServer.SetupFirewallRule();
                 } catch (Exception exc) {
                     Console.WriteLine("Failed to install firewall rule: {0}", exc);
-                }
-
-                Directory.CreateDirectory(Path.Combine(InstallPath, "Help"));
-                foreach (var n in MyAssembly.GetManifestResourceNames()) {
-                    if (!n.EndsWith(".png"))
-                        continue;
-
-                    var destinationPath = Path.Combine(InstallPath, n.Replace("Viramate.", "").Replace("Help.", "Help\\"));
-                    using (var src = MyAssembly.GetManifestResourceStream(n))
-                    using (var dst = File.OpenWrite(destinationPath))
-                        await src.CopyToAsync(dst);
+                    allowAutoClose = false;
                 }
 
                 string helpFileText;
@@ -241,6 +243,8 @@ namespace Viramate {
                     Console.WriteLine("Press enter to exit.");
                 }
             } else {
+                await AutoUpdateInstaller();
+
                 if (!Debugger.IsAttached && !IsRunningInsideCmd) {
                     Console.WriteLine("Failed to install extension. Press enter to exit.");
                     Console.ReadLine();
@@ -248,8 +252,6 @@ namespace Viramate {
                     Console.WriteLine("Failed to install extension.");
                 }
             }
-
-            await AutoUpdateInstaller();
         }
     }
 

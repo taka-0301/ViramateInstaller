@@ -139,13 +139,28 @@ namespace Viramate {
             }
         }
 
+        static string DiskSourcePath {
+            get {
+                return Path.GetFullPath(Path.Combine(ExecutableDirectory, "..", "..", "ext"));
+            }
+        }
+
         static bool InstallFromDisk {
             get {
-                var defaultDebug = IsRunningDirectlyFromBuild;
+                bool defaultDebug = false;
+
+                try {
+                    if (!Directory.Exists(DiskSourcePath))
+                        return false;
+
+                    defaultDebug = IsRunningDirectlyFromBuild;
+                } catch (Exception exc) {
+                    Console.Error.WriteLine(exc);
+                }
+
                 var args = Environment.GetCommandLineArgs();
                 if (args.Length <= 1)
                     return defaultDebug;
-
                 return (defaultDebug || args.Contains("--disk")) && !args.Contains("--network");
             }
         }
