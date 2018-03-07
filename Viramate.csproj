@@ -78,6 +78,7 @@
   <PropertyGroup>
     <PostBuildEvent>del "$(TargetDir)Newtonsoft.Json.xml"
 "$(TargetDir)..\third-party\7za.exe" a "$(TargetDir)..\built\installer.zip" "$(TargetDir)*"
+"$(TargetDir)..\third-party\7za.exe" a "$(TargetDir)..\built\manager.zip" "$(TargetDir)..\chromeapp\*"
 "$(TargetDir)..\third-party\7za.exe" a "$(TargetDir)..\built\setup.7z" "$(TargetDir)*" "$(TargetDir)..\sfx-bootstrap.bat"
 copy /b "$(TargetDir)..\third-party\7zS.sfx" + "$(TargetDir)..\sfx-config.txt" + "$(TargetDir)..\built\setup.7z" "$(TargetDir)..\built\ViramateSetup.exe"
 del "$(TargetDir)..\built\setup.7z"</PostBuildEvent>

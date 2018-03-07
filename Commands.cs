@@ -33,6 +33,11 @@ namespace Viramate {
                     var localPath = Path.GetFullPath(f).Replace(sourcePath, "").Substring(1);
                     var destFile = Path.Combine(destinationPath, localPath);
                     Directory.CreateDirectory(Path.GetDirectoryName(destFile));
+
+                    // HACK
+                    if (File.Exists(destFile))
+                        File.SetAttributes(destFile, FileAttributes.Normal);
+
                     File.Copy(f, destFile, true);
                     if (i++ % 3 == 0)
                         Console.WriteLine(localPath);
@@ -58,6 +63,10 @@ namespace Viramate {
                 var destFilename = Path.Combine(destinationPath, entry.FullName);
                 Directory.CreateDirectory(Path.GetDirectoryName(destFilename));
 
+                // HACK
+                if (File.Exists(destFilename))
+                    File.SetAttributes(destFilename, FileAttributes.Normal);
+
                 using (var src = entry.Open())
                 using (var dst = File.Open(destFilename, FileMode.Create))
                     await src.CopyToAsync(dst);
@@ -77,7 +86,7 @@ namespace Viramate {
             if (File.Exists(desktopIni))
             try {
                 (new DirectoryInfo(directory)).Attributes = FileAttributes.System;
-                (new FileInfo(desktopIni)).Attributes = FileAttributes.System | FileAttributes.Hidden;
+                File.SetAttributes(desktopIni, FileAttributes.System | FileAttributes.Hidden);
             } catch (Exception exc) {
                 Console.Error.WriteLine(exc);
             }
