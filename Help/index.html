@@ -3,14 +3,13 @@
 <html lang="en" xmlns="http://www.w3.org/1999/xhtml">
 <head>
     <meta charset="utf-8" />
-    <title>Viramate Installer Guide</title>
+    <title>Viramate First Run Guide</title>
     <script type="text/javascript">
         function onLoad () {
-            var ep = document.querySelector("#extension_path");
-            selectElementText(ep);
-            ep.onclick = function () { selectElementText(ep); };
             var ce = document.querySelector("#extensions_url")
             ce.onclick = function () { selectElementText(ce); };
+            var ip = document.querySelector("#install_path")
+            ip.onclick = function () { selectElementText(ip); };
         }
 
         function selectElementText (elt) {
@@ -24,13 +23,10 @@
 </head>
 <body onload="onLoad();">
     <h2>How to finish installing Viramate</h2>
+    <img src="install.gif" alt="Installation Example Animation" title="Installation Example Animation">
     <ol>
-        <li>Copy this folder name by pressing CTRL-C: <pre id='extension_path'></pre></li>
-        <li>Visit <pre id="extensions_url">chrome://extensions</pre> in your Chrome browser.</li>
-        <li>Ensure that 'Developer mode' is turned on.<br><img src="developer-mode.png"></li>
-        <li>Click 'Load unpacked extension...'<br><img src="load-unpacked-extension.png"></li>
-        <li>Paste the folder name into the dialog box by selecting all the existing text in the 'Folder' field and then pressing CTRL-V.<br><img src="folder-name.png"></li>
-        <li>Click OK.</li>
+        <li>Visit <pre id='extensions_url'>chrome://extensions</pre> in your Chrome browser.</li>
+        <li>Drag and drop the <b>Viramate</b> and <b>Viramate Extension Manager</b> icons from the <pre id='install_path'></pre> directory into the Chrome Extensions tab, one at a time.</li>
     </ol>
 </body>
 </html>

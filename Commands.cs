@@ -19,7 +19,10 @@ using Newtonsoft.Json;
 
 namespace Viramate {
     static partial class Program {
-        public static Task UpdateFromFolder (string sourcePath) {
+        public static Task UpdateFromFolder (string sourcePath, string destinationPath) {
+            sourcePath = Path.GetFullPath(sourcePath);
+            destinationPath = Path.GetFullPath(destinationPath);
+
             return Task.Run(() => {
                 int i = 1;
 
@@ -28,18 +31,22 @@ namespace Viramate {
 
                 foreach (var f in allFiles) {
                     var localPath = Path.GetFullPath(f).Replace(sourcePath, "").Substring(1);
-                    var destinationPath = Path.Combine(InstallPath, localPath);
-                    Directory.CreateDirectory(Path.GetDirectoryName(destinationPath));
-                    File.Copy(f, destinationPath, true);
+                    var destFile = Path.Combine(destinationPath, localPath);
+                    Directory.CreateDirectory(Path.GetDirectoryName(destFile));
+                    File.Copy(f, destFile, true);
                     if (i++ % 3 == 0)
                         Console.WriteLine(localPath);
                     else
                         Console.Write(localPath + " ");
                 }
+
+                SetupDesktopIni(destinationPath);
             });
         }
 
         public static async Task ExtractZipFile (string zipFile, string destinationPath) {
+            destinationPath = Path.GetFullPath(destinationPath);
+
             int i = 1;
 
             using (var s = File.OpenRead(zipFile))
@@ -52,7 +59,7 @@ namespace Viramate {
                 Directory.CreateDirectory(Path.GetDirectoryName(destFilename));
 
                 using (var src = entry.Open())
-                using (var dst = File.OpenWrite(destFilename))
+                using (var dst = File.Open(destFilename, FileMode.Create))
                     await src.CopyToAsync(dst);
 
                 File.SetLastWriteTimeUtc(destFilename, entry.LastWriteTime.UtcDateTime);
@@ -60,6 +67,19 @@ namespace Viramate {
                     Console.WriteLine(entry.FullName);
                 else
                     Console.Write(entry.FullName + " ");
+            }
+
+            SetupDesktopIni(destinationPath);
+        }
+
+        private static void SetupDesktopIni (string directory) {
+            var desktopIni = Path.Combine(directory, "desktop.ini");
+            if (File.Exists(desktopIni))
+            try {
+                (new DirectoryInfo(directory)).Attributes = FileAttributes.System;
+                (new FileInfo(desktopIni)).Attributes = FileAttributes.System | FileAttributes.Hidden;
+            } catch (Exception exc) {
+                Console.Error.WriteLine(exc);
             }
         }
 
@@ -84,9 +104,11 @@ namespace Viramate {
             if (resp.IsFromCache)
                 Console.WriteLine("no new update. Using cached update.");
 
-            var zipPath = Path.Combine(InstallPath, Path.GetFileName(resp.ResponseUri.LocalPath));
+            Directory.CreateDirectory(MiscPath);
+
+            var zipPath = Path.Combine(MiscPath, Path.GetFileName(resp.ResponseUri.LocalPath));
             using (var src = resp.GetResponseStream())
-            using (var dst = File.OpenWrite(zipPath + ".tmp"))
+            using (var dst = File.Open(zipPath + ".tmp", FileMode.Create))
                 await src.CopyToAsync(dst);
 
             if (File.Exists(zipPath))
@@ -110,7 +132,7 @@ namespace Viramate {
                 if (result.WasCached)
                     return false;
 
-                var newVersionDirectory = Path.Combine(InstallPath, "Installer Update");
+                var newVersionDirectory = Path.Combine(DataPath, "Installer Update");
                 Directory.CreateDirectory(newVersionDirectory);
 
                 Console.WriteLine($"Extracting {result.ZipPath} to {newVersionDirectory} ...");
@@ -138,15 +160,37 @@ namespace Viramate {
         }
 
         public static async Task<InstallResult> InstallExtensionFiles (bool onlyIfModified, bool? installFromDisk) {
-            Directory.CreateDirectory(InstallPath);
+            Directory.CreateDirectory(DataPath);
+
+            if (File.Exists(Path.Combine(DataPath, "manifest.json"))) {
+                Console.WriteLine("Detected old installation. Removing manifest. You'll need to re-install!");
+                onlyIfModified = false;
+                File.Delete(Path.Combine(DataPath, "manifest.json"));
+            }
 
             if (installFromDisk.GetValueOrDefault(InstallFromDisk)) {
-                Console.WriteLine($"Copying from {DiskSourcePath} to {InstallPath} ...");
-                await UpdateFromFolder(DiskSourcePath);
+                Console.WriteLine($"Copying from {DiskSourcePath} to {ExtensionInstallPath} ...");
+                await UpdateFromFolder(DiskSourcePath, ExtensionInstallPath);
                 Console.WriteLine("done.");
-                return InstallResult.Updated;
+
+                var managerPath = Path.Combine(ExecutableDirectory, "..", "chromeapp");
+                if (Directory.Exists(managerPath)) {
+                    Console.WriteLine($"Copying from {managerPath} to {ManagerInstallPath} ...");
+                    await UpdateFromFolder(managerPath, ManagerInstallPath);
+                    Console.WriteLine("done.");
+                }
             } else {
                 DownloadResult result;
+
+                Console.Write($"Downloading {ManagerSourceUrl}... ");
+                try {
+                    result = await DownloadLatest(ManagerSourceUrl);
+                    Console.WriteLine($"Extracting {result.ZipPath} to {ManagerInstallPath} ...");
+                    await ExtractZipFile(result.ZipPath, ManagerInstallPath);
+                    Console.WriteLine($"done.");
+                } catch (Exception exc) {
+                    Console.Error.WriteLine(exc.Message);
+                }
 
                 Console.Write($"Downloading {ExtensionSourceUrl}... ");
                 try {
@@ -159,12 +203,12 @@ namespace Viramate {
                     return InstallResult.Failed;
                 }
 
-                Console.WriteLine($"Extracting {result.ZipPath} to {InstallPath} ...");
-                await ExtractZipFile(result.ZipPath, InstallPath);
+                Console.WriteLine($"Extracting {result.ZipPath} to {ExtensionInstallPath} ...");
+                await ExtractZipFile(result.ZipPath, ExtensionInstallPath);
                 Console.WriteLine($"done.");
-
-                return InstallResult.Updated;
             }
+
+            return InstallResult.Updated;
         }
 
         static Stream OpenResource (string name) {
@@ -178,6 +222,9 @@ namespace Viramate {
             Console.WriteLine($"Viramate Installer v{MyAssembly.GetName().Version}");
             if (Environment.GetCommandLineArgs().Contains("--version"))
                 return;
+
+            if (Environment.GetCommandLineArgs().Contains("--update"))
+                await AutoUpdateInstaller();
 
             Console.WriteLine("Installing extension. This'll take a moment...");
 
@@ -195,17 +242,19 @@ namespace Viramate {
                     ).Replace(
                         "$extension_id$", ExtensionId
                     );
-                var manifestPath = Path.Combine(InstallPath, "nmh.json");
+
+                var manifestPath = Path.Combine(MiscPath, "nmh.json");
+                Directory.CreateDirectory(MiscPath);
                 File.WriteAllText(manifestPath, manifestText);
 
-                Directory.CreateDirectory(Path.Combine(InstallPath, "Help"));
+                Directory.CreateDirectory(Path.Combine(DataPath, "Help"));
                 foreach (var n in MyAssembly.GetManifestResourceNames()) {
-                    if (!n.EndsWith(".png"))
+                    if (!n.EndsWith(".gif") && !n.EndsWith(".png"))
                         continue;
 
-                    var destinationPath = Path.Combine(InstallPath, n.Replace("Viramate.", "").Replace("Help.", "Help\\"));
+                    var destinationPath = Path.Combine(DataPath, n.Replace("Viramate.", "").Replace("Help.", "Help\\"));
                     using (var src = MyAssembly.GetManifestResourceStream(n))
-                    using (var dst = File.OpenWrite(destinationPath))
+                    using (var dst = File.Open(destinationPath, FileMode.Create))
                         await src.CopyToAsync(dst);
                 }
 
@@ -228,11 +277,11 @@ namespace Viramate {
 
                 helpFileText = Regex.Replace(
                     helpFileText, 
-                    @"\<pre\ id='extension_path'>[^<]*\</pre\>", 
-                    @"<pre id='extension_path'>" + InstallPath + "</pre>"
+                    @"\<pre\ id='install_path'>[^<]*\</pre\>", 
+                    @"<pre id='install_path'>" + DataPath + "</pre>"
                 );
 
-                var helpFilePath = Path.Combine(InstallPath, "Help", "index.html");
+                var helpFilePath = Path.Combine(DataPath, "Help", "index.html");
                 File.WriteAllText(helpFilePath, helpFileText);
 
                 Console.WriteLine($"Viramate v{ReadManifestVersion(null)} has been installed.");
@@ -241,6 +290,13 @@ namespace Viramate {
                     Process.Start(helpFilePath);
                 } else if (!Debugger.IsAttached && !IsRunningInsideCmd) {
                     Console.WriteLine("Press enter to exit.");
+                    return;
+                }
+
+                if (!Environment.GetCommandLineArgs().Contains("--nodir")) {
+                    Console.WriteLine("Waiting, then opening install directory...");
+                    await Task.Delay(2000);
+                    Process.Start(DataPath);
                 }
             } else {
                 await AutoUpdateInstaller();

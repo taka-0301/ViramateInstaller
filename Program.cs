@@ -60,6 +60,7 @@ namespace Viramate {
 
         public const string ExtensionSourceUrl = "http://luminance.org/vm/ext.zip";
         public const string InstallerSourceUrl = "http://luminance.org/vm/installer.zip";
+        public const string ManagerSourceUrl = "http://luminance.org/vm/manager.zip";
 
         static void Main (string[] args) {
             MyAssembly = Assembly.GetExecutingAssembly();
@@ -165,10 +166,22 @@ namespace Viramate {
             }
         }
 
-        static string InstallPath {
+        static string DataPath {
             get {
                 var folder = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
                 return Path.Combine(folder, "Viramate");
+            }
+        }
+
+        static string ExtensionInstallPath {
+            get {
+                return Path.Combine(DataPath, "Viramate");
+            }
+        }
+
+        static string ManagerInstallPath {
+            get {
+                return Path.Combine(DataPath, "Viramate Extension Manager");
             }
         }
 
@@ -177,6 +190,12 @@ namespace Viramate {
                 var cb = MyAssembly.CodeBase;
                 var uri = new Uri(cb);
                 return uri.LocalPath;
+            }
+        }
+        
+        static string MiscPath {
+            get {
+                return Path.Combine(DataPath, "Misc");
             }
         }
 
@@ -189,7 +208,7 @@ namespace Viramate {
         static void MessagingHostMainLoop () {
             var stdin = Console.OpenStandardInput();
             var stdout = Console.OpenStandardOutput();
-            var logFilePath = Path.Combine(InstallPath, "installer.log");
+            var logFilePath = Path.Combine(DataPath, "installer.log");
 
             using (var log = new StreamWriter(logFilePath, true, Encoding.UTF8)) {
                 Console.SetOut(log);
@@ -219,12 +238,12 @@ namespace Viramate {
         }
 
         public static string ReadManifestVersion (string zipFilePath) {
-            var filename = Path.Combine(InstallPath, "manifest.json");
             try {
                 string json;
-                if (zipFilePath == null)
+                if (zipFilePath == null) {
+                    var filename = Path.Combine(ExtensionInstallPath, "manifest.json");
                     json = File.ReadAllText(filename, Encoding.UTF8);
-                else {
+                } else {
                     using (var zf = new ZipArchive(File.OpenRead(zipFilePath), ZipArchiveMode.Read, false))
                     using (var fileStream = zf.Entries.FirstOrDefault(e => e.FullName.EndsWith("manifest.json")).Open())
                     using (var sr = new StreamReader(fileStream, Encoding.UTF8)) {
