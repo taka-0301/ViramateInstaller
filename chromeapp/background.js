@@ -1,5 +1,6 @@
 console.log("Started");
 
+chrome.runtime.onMessage.addListener(onExternalMessage);
 chrome.runtime.onMessageExternal.addListener(onExternalMessage);
 
 function onExternalMessage (message, sender, sendResponse) {
