@@ -268,7 +268,7 @@ namespace Viramate {
                 }
 
                 const string keyName = @"Software\Google\Chrome\NativeMessagingHosts\com.viramate.installer";
-                using (var key = Registry.CurrentUser.CreateSubKey(keyName, true)) {
+                using (var key = Registry.CurrentUser.CreateSubKey(keyName)) {
                     Console.WriteLine($"{keyName}\\@ = {manifestPath}");
                     key.SetValue(null, manifestPath);
                 }
