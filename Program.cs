@@ -58,9 +58,9 @@ namespace Viramate {
         public static Assembly MyAssembly;
         static bool IsRunningInsideCmd = false;
 
-        public const string ExtensionSourceUrl = "http://luminance.org/vm/ext.zip";
-        public const string InstallerSourceUrl = "http://luminance.org/vm/installer.zip";
-        public const string ManagerSourceUrl = "http://luminance.org/vm/manager.zip";
+        public const string ExtensionSourceUrl = "http://viramate.luminance.org/vm/ext.zip";
+        public const string InstallerSourceUrl = "http://viramate.luminance.org/vm/installer.zip";
+        public const string ManagerSourceUrl = "http://viramate.luminance.org/vm/manager.zip";
 
         static void Main (string[] args) {
             MyAssembly = Assembly.GetExecutingAssembly();
